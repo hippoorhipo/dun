@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>L's Dungeon Adventure Idle Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+        }
+        #gameCanvas {
+            border: 1px solid #fff;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Constants and global variables
+        const WIDTH = 800;
+        const HEIGHT = 700;
+        const COLORS = {
+            WHITE: "#FFFFFF",
+            BLACK: "#000000",
+            RED: "#FF0000",
+            GREEN: "#00FF00",
+            BLUE: "#0000FF",
+            YELLOW: "#FFFF00",
+            PURPLE: "#800080",
+            SKY_BLUE: "#87CEEB",
+            ORANGE: "#FFA500",
+            DARK_ORANGE: "#FF8C00",
+            BROWN: "#A52A2A"
+        };
+
+        const QUALITY_COLORS = {
+            "Common": COLORS.WHITE,
+            "Rare": COLORS.BLUE,
+            "Epic": COLORS.PURPLE,
+            "Legendary": COLORS.GREEN,
+            "Mythic": "#FFA500"  // Orange
+        };
+
+        const MONSTER_TYPES = [
+            {"name": "Slime", "shape": "circle", "color": "#376900", "size": 10},
+            {"name": "Bat", "shape": "triangle", "color": "#646464", "size": 8},
+            {"name": "Skeleton", "shape": "rectangle", "color": "#C8C8C8", "size": 12},
+            {"name": "Ghost", "shape": "oval", "color": "#C8C8FF", "size": 11},
+            {"name": "Goblin", "shape": "pentagon", "color": "#006400", "size": 9}
+        ];
+
+        const BOSS_TYPE = {"name": "Sea Urchin", "shape": "sea_urchin", "color": "#960000", "size": 15};
+
+        // Classes
+        class Knight {
+            constructor() {
+                this.level = 1;
+                this.exp = 0;
+                this.expToNextLevel = 100;
+                this.baseAttack = 10;
+                this.baseDefense = 10;
+                this.attack = this.baseAttack;
+                this.defense = this.baseDefense;
+                this.health = 100;
+                this.maxHealth = 100;
+                this.equipment = {"weapon": null, "armor": null, "shield": null};
+                this.position = 0;
+                this.gold = 0;
+                this.monstersKilled = 0;
+                this.highestFloor = 1;
+                this.bestEquipment = null;
+                this.color = COLORS.WHITE;
+                this.weaponColor = COLORS.WHITE;
+                this.shieldColor = COLORS.WHITE;
+            }
+
+            levelUp() {
+                this.level += 1;
+                this.baseAttack = Math.floor(this.baseAttack * 1.2);
+                this.baseDefense = Math.floor(this.baseDefense * 1.2);
+                this.maxHealth = Math.floor(this.maxHealth * 1.2);
+                this.health = this.maxHealth;
+                this.expToNextLevel *= 2;
+                this.updateStats();
+            }
+
+            equip(item) {
+                if (item.type in this.equipment) {
+                    const currentItem = this.equipment[item.type];
+                    if (currentItem === null || item.bonus > currentItem.bonus) {
+                        this.equipment[item.type] = item;
+                        this.updateStats();
+                        if (item.type === "weapon") {
+                            this.weaponColor = item.getColor();
+                        } else if (item.type === "armor") {
+                            this.color = item.getColor();
+                        } else if (item.type === "shield") {
+                            this.shieldColor = item.getColor();
+                        }
+                        if (this.bestEquipment === null || item.bonus > this.bestEquipment.bonus) {
+                            this.bestEquipment = item;
+                        }
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            updateStats() {
+                this.attack = this.baseAttack;
+                this.defense = this.baseDefense;
+                for (const item of Object.values(this.equipment)) {
+                    if (item) {
+                        if (item.type === "weapon") {
+                            this.attack += item.bonus;
+                        } else if (item.type === "armor" || item.type === "shield") {
+                            this.defense += item.bonus;
+                        }
+                    }
+                }
+            }
+
+            gainExp(exp) {
+                this.exp += exp;
+                while (this.exp >= this.expToNextLevel) {
+                    this.exp -= this.expToNextLevel;
+                    this.levelUp();
+                }
+            }
+        }
+
+        class Monster {
+            constructor(floor, isBoss = false, isSuperBoss = false) {
+                this.level = floor;
+                this.isBoss = isBoss;
+                this.isSuperBoss = isSuperBoss;
+                let baseHealth = floor * 40;
+                if (isSuperBoss) {
+                    this.health = baseHealth * 10;
+                    this.attack = floor * 10;
+                    this.exp = floor * 300;
+                    this.type = {"name": "Dragon", "shape": "star", "color": "#FF0000", "size": 20};
+                } else if (isBoss) {
+                    this.health = baseHealth * 3;
+                    this.attack = floor * 8;
+                    this.exp = floor * 60;
+                    this.type = BOSS_TYPE;
+                } else {
+                    this.health = baseHealth * (Math.random() * 0.7 + 0.8);
+                    this.attack = floor * 6;
+                    this.exp = floor * 5;
+                    this.type = MONSTER_TYPES[Math.floor(Math.random() * MONSTER_TYPES.length)];
+                }
+                this.maxHealth = this.health;
+                this.position = Math.floor(Math.random() * 81) + 10;
+            }
+
+            generateGoldDrop() {
+                const floorMultiplier = Math.sqrt(this.level);
+                let baseGold;
+                if (this.isSuperBoss) {
+                    baseGold = Math.floor(Math.random() * 801) + 200;
+                } else if (this.isBoss) {
+                    baseGold = Math.floor(Math.random() * 151) + 50;
+                } else {
+                    baseGold = Math.floor(Math.random() * 41) + 10;
+                }
+                return Math.max(this.isBoss ? 50 : 10, Math.floor(baseGold * floorMultiplier));
+            }
+        }
+
+        class Equipment {
+            constructor(name, type, bonus, quality) {
+                this.name = name;
+                this.type = type;
+                this.bonus = Math.round(bonus);  // Round the bonus to the nearest integer
+                this.quality = quality;
+                this.level = 1;
+                this.fighting = false;
+                this.lightningTimer = 0;
+            }
+
+            getColor() {
+                return QUALITY_COLORS[this.quality];
+            }
+
+            upgrade() {
+                this.bonus = Math.round(this.bonus + 3);  // Round the bonus after upgrading
+                this.level += 1;
+            }
+        }
+
+        class GameState {
+            constructor() {
+                this.knight = new Knight();
+                this.currentFloor = 1;
+                this.monsters = [];
+                this.progress = 0;
+                this.lastUpdate = Date.now();
+                this.inTown = false;
+                this.townRestTime = 0;
+                this.showReturnPrompt = false;
+                this.fighting = false;
+                this.message = "";
+                this.messageTime = 0;
+                this.gameOver = false;
+                this.healCost = 5;
+                this.upgradeCosts = {"Common": 300, "Rare": 350, "Epic": 400, "Legendary": 450, "Mythic": 500};
+                this.flashTimer = 0;
+                this.isFlashing = false;
+                this.monsterScale = 1.0;
+                this.damagePerSecond = 1;
+                this.baseDrawCost = 10;
+                this.lastDroppedBonus = 5;
+                this.lightningTimer = 0;
+                this.welcomeScreen = true;
+                this.blinkTimer = 0;
+                this.showStartText = true;
+                this.buttons = {
+                    'drawEquipment': { x: 10, y: HEIGHT - 50, width: 80, height: 40, text: "Draw (D)", color: COLORS.BROWN, textColor: COLORS.WHITE },
+                    'heal': { x: 100, y: HEIGHT - 50, width: 80, height: 40, text: "Heal (H)", color: COLORS.BROWN, textColor: COLORS.WHITE },
+                    'upgradeWeapon': { x: 190, y: HEIGHT - 50, width: 80, height: 40, text: "Upgrade (W)", color: COLORS.BROWN, textColor: COLORS.WHITE },
+                    'upgradeArmor': { x: 280, y: HEIGHT - 50, width: 80, height: 40, text: "Upgrade (A)", color: COLORS.BROWN, textColor: COLORS.WHITE },
+                    'upgradeShield': { x: 370, y: HEIGHT - 50, width: 80, height: 40, text: "Upgrade (S)", color: COLORS.BROWN, textColor: COLORS.WHITE },
+                    'returnToTown': { x: 460, y: HEIGHT - 50, width: 80, height: 40, text: "To Town (Y)", color: COLORS.BROWN, textColor: COLORS.WHITE },
+                    'notReturn': { x: 550, y: HEIGHT - 50, width: 80, height: 40, text: "No (N)", color: COLORS.BROWN, textColor: COLORS.WHITE },
+                    'returnToDungeon': { x: 640, y: HEIGHT - 50, width: 80, height: 40, text: "To dungeon(R)", color: COLORS.BROWN, textColor: COLORS.WHITE },
+                    'restart': { x: 730, y: HEIGHT - 50, width: 80, height: 40, text: "Restart(R)", color: COLORS.BROWN, textColor: COLORS.WHITE }
+                };
+            }
+
+            update() {
+                const currentTime = Date.now();
+                const elapsedTime = (currentTime - this.lastUpdate) / 1000; // Convert to seconds
+                this.lastUpdate = currentTime;
+
+                if (this.welcomeScreen) {
+                    if (currentTime - this.blinkTimer >= 500) {
+                        this.blinkTimer = currentTime;
+                        this.showStartText = !this.showStartText;
+                    }
+                    return;
+                }
+
+                if (this.inTown || this.showReturnPrompt || this.gameOver) {
+                    return;
+                }
+
+                if (this.monsters.length === 0) {
+                    this.generateMonsters();
+                }
+
+                if (!this.fighting && this.monsters.length > 0) {
+                    this.knight.position += 10 * elapsedTime;
+                    if (this.knight.position >= this.monsters[0].position) {
+                        this.fighting = true;
+                        this.knight.position = this.monsters[0].position;
+                    }
+                }
+
+                if (this.fighting && this.monsters.length > 0) {
+                    const monster = this.monsters[0];
+                    const damageDealt = Math.max(1, this.knight.attack * this.damagePerSecond * elapsedTime);
+                    monster.health -= damageDealt;
+                    this.isFlashing = true;
+                    this.flashTimer += elapsedTime;
+                    if (this.flashTimer >= 1.3) {
+                        this.flashTimer = 0;
+                        this.monsterScale = this.monsterScale === 1.0 ? 1.3 : 1.0;
+                    }
+                    if (monster.health <= 0) {
+                        this.handleMonsterDefeat(monster);
+                        this.fighting = false;
+                        this.isFlashing = false;
+                        this.monsterScale = 1.0;
+                    } else {
+                        const damageReceived = Math.max(1, monster.attack - this.knight.defense) * elapsedTime;
+                        this.knight.health -= damageReceived;
+                        if (this.knight.health <= 0) {
+                            this.gameOver = true;
+                        }
+                    }
+                }
+
+                if (currentTime - this.messageTime > 5000) {
+                    this.message = "";
+                }
+
+                if (this.currentFloor > this.knight.highestFloor) {
+                    this.knight.highestFloor = this.currentFloor;
+                }
+
+                if (this.fighting) {
+                    this.lightningTimer += elapsedTime;
+                    if (this.lightningTimer >= 1.3) {
+                        this.lightningTimer = 0;
+                    }
+                } else {
+                    this.lightningTimer = 0;
+                }
+            }
+
+            generateMonsters() {
+                const numMonsters = Math.floor(Math.random() * 2) + 5; // 5 or 6 monsters
+                const isSuperBossFloor = this.currentFloor % 10 === 0;
+                for (let i = 0; i < numMonsters; i++) {
+                    const isBoss = (i === numMonsters - 1);
+                    const isSuperBoss = isBoss && isSuperBossFloor;
+                    this.monsters.push(new Monster(this.currentFloor, isBoss, isSuperBoss));
+                }
+                this.monsters.sort((a, b) => a.position - b.position);
+            }
+
+            handleMonsterDefeat(monster) {
+                this.knight.monstersKilled += 1;
+                this.knight.gainExp(monster.exp);
+                
+                const goldDrop = monster.generateGoldDrop();
+                this.knight.gold += goldDrop;
+
+                if (monster.isSuperBoss || monster.isBoss || Math.random() < 0.3) {
+                    this.dropEquipment(monster.isBoss, monster.isSuperBoss);
+                }
+
+                this.progress += 10;
+                if (this.progress >= 100) {
+                    this.showReturnPrompt = true;
+                }
+                this.monsters.shift();
+                if (this.monsters.length === 0) {
+                    this.knight.position = 0;
+                }
+            }
+            dropEquipment(isBoss, isSuperBoss = false) {
+                const equipmentType = ["weapon", "armor", "shield"][Math.floor(Math.random() * 3)];
+                let quality;
+                if (isSuperBoss) {
+                    quality = "Mythic";
+                } else if (isBoss) {
+                    quality = ["Common", "Rare", "Epic", "Legendary", "Mythic"][Math.floor(Math.random() * 5)];
+                } else {
+                    quality = ["Common", "Rare", "Epic"][Math.floor(Math.random() * 3)];
+                }
+                
+                const bonusMultiplier = {"Common": 1, "Rare": 1.5, "Epic": 2, "Legendary": 3, "Mythic": 5};
+                
+                this.lastDroppedBonus = Math.floor(this.lastDroppedBonus * 1.1999);
+                const bonus = Math.round(this.lastDroppedBonus * bonusMultiplier[quality] * (this.currentFloor / 10 + 1));
+                
+                const newEquipment = new Equipment(`${quality} ${equipmentType} +${bonus}`, equipmentType, bonus, quality);
+                if (this.knight.equip(newEquipment)) {
+                    this.message = `Obtained and equipped: ${newEquipment.name}`;
+                } else {
+                    this.message = `Obtained and discarded: ${newEquipment.name}`;
+                }
+                this.messageTime = Date.now();
+            }
+
+            drawEquipment() {
+                const drawCost = this.baseDrawCost * this.currentFloor;
+                if (this.knight.gold >= drawCost) {
+                    this.knight.gold -= drawCost;
+                    const quality = ["Common", "Rare", "Epic", "Legendary", "Mythic"][Math.floor(Math.random() * 5)];
+                    const equipmentType = ["weapon", "armor", "shield"][Math.floor(Math.random() * 3)];
+                    const bonusMultiplier = {"Common": 1, "Rare": 1.5, "Epic": 2, "Legendary": 3, "Mythic": 5};
+                    const bonus = Math.round((Math.random() * 5 + 1) * bonusMultiplier[quality] * (this.currentFloor / 10 + 1));
+                    const newEquipment = new Equipment(`${quality} ${equipmentType} +${bonus}`, equipmentType, bonus, quality);
+                    if (this.knight.equip(newEquipment)) {
+                        this.message = `Drew and equipped: ${newEquipment.name}`;
+                    } else {
+                        this.message = `Drew and discarded: ${newEquipment.name}`;
+                    }
+                    this.messageTime = Date.now();
+                    return newEquipment;
+                } else {
+                    this.message = `Not enough gold to draw. Cost: ${drawCost}`;
+                    this.messageTime = Date.now();
+                }
+                return null;
+            }
+
+            heal() {
+                if (this.knight.gold >= this.healCost) {
+                    this.knight.gold -= this.healCost;
+                    this.knight.health = this.knight.maxHealth;
+                    this.message = `Spent ${this.healCost} gold to heal`;
+                } else {
+                    this.message = "Not enough gold to heal";
+                }
+                this.messageTime = Date.now();
+            }
+
+            upgradeEquipment(slot) {
+                const item = this.knight.equipment[slot];
+                if (item) {
+                    const cost = this.upgradeCosts[item.quality];
+                    if (this.knight.gold >= cost) {
+                        this.knight.gold -= cost;
+                        const oldBonus = item.bonus;
+                        item.upgrade();
+                        const bonusIncrease = item.bonus - oldBonus;
+                        if (slot === "weapon") {
+                            this.knight.attack += bonusIncrease;
+                        }
+                        this.knight.updateStats();
+                        this.message = `Upgraded ${item.name} to level ${item.level}, new value: +${item.bonus}`;
+                    } else {
+                        this.message = "Not enough gold to upgrade";
+                    }
+                } else {
+                    this.message = `No ${slot} equipped`;
+                }
+                this.messageTime = Date.now();
+            }
+
+            handleInput(inputType, value) {
+                if (this.welcomeScreen) {
+                    if ((inputType === 'key' && value === 'Enter') || 
+                        (inputType === 'mouse' || inputType === 'touch')) {
+                        this.welcomeScreen = false;
+                        this.message = "Game started!";
+                        this.messageTime = Date.now();
+                    }
+                    return;
+                }
+
+                if (this.showReturnPrompt) {
+                    if ((inputType === 'key' && value === 'y') || 
+                        (this.isButtonClicked(inputType, value, 'returnToTown'))) {
+                        this.inTown = true;
+                        this.showReturnPrompt = false;
+                        this.knight.position = 0;
+                        this.monsters = [];
+                        this.message = "Back to Town";
+                        this.messageTime = Date.now();
+                    } else if ((inputType === 'key' && value === 'n') || 
+                               (this.isButtonClicked(inputType, value, 'notReturn'))) {
+                        this.currentFloor += 1;
+                        this.progress = 0;
+                        this.showReturnPrompt = false;
+                        this.knight.position = 0;
+                        this.monsters = [];
+                    }
+                } else if (this.inTown) {
+                    if ((inputType === 'key' && value === 'd') || 
+                        (this.isButtonClicked(inputType, value, 'drawEquipment'))) {
+                        this.drawEquipment();
+                    } else if ((inputType === 'key' && value === 'h') || 
+                               (this.isButtonClicked(inputType, value, 'heal'))) {
+                        this.heal();
+                    } else if ((inputType === 'key' && value === 'w') || 
+                               (this.isButtonClicked(inputType, value, 'upgradeWeapon'))) {
+                        this.upgradeEquipment("weapon");
+                    } else if ((inputType === 'key' && value === 'a') || 
+                               (this.isButtonClicked(inputType, value, 'upgradeArmor'))) {
+                        this.upgradeEquipment("armor");
+                    } else if ((inputType === 'key' && value === 's') || 
+                               (this.isButtonClicked(inputType, value, 'upgradeShield'))) {
+                        this.upgradeEquipment("shield");
+                    } else if ((inputType === 'key' && value === 'r') || 
+                               (this.isButtonClicked(inputType, value, 'returnToDungeon'))) {
+                        this.inTown = false;
+                        this.currentFloor += 1;
+                        this.progress = 0;
+                        this.message = "Left Town";
+                        this.messageTime = Date.now();
+                    }
+                } else if (this.gameOver) {
+                    if ((inputType === 'key' && value === 'r') || 
+                        (this.isButtonClicked(inputType, value, 'restart'))) {
+                        this.reset();
+                        this.message = "Game restarted!";
+                        this.messageTime = Date.now();
+                    }
+                }
+            }
+
+            isButtonClicked(inputType, value, buttonKey) {
+                if (inputType !== 'mouse' && inputType !== 'touch') return false;
+                const button = this.buttons[buttonKey];
+                return value.x >= button.x && value.x <= button.x + button.width &&
+                       value.y >= button.y && value.y <= button.y + button.height;
+            }
+
+            reset() {
+                Object.assign(this, new GameState());
+            }
+        }
+
+        // Rendering functions
+        function drawKnight(ctx, x, y, size, bodyColor, weaponColor, shieldColor) {
+            size = Math.floor(size * 1.2);
+            ctx.fillStyle = bodyColor;
+            ctx.fillRect(x - size/3, y - size/3, size/1.5, size/1.5);
+            ctx.beginPath();
+            ctx.arc(x, y - size/3 - size/6, size/6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = weaponColor;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(x + size/3, y);
+            ctx.lineTo(x + size/1.5, y - size/3);
+            ctx.stroke();
+            ctx.fillStyle = shieldColor;
+            ctx.beginPath();
+            ctx.arc(x - size/3, y, size/4, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawMonster(ctx, x, y, monster, size = null) {
+            size = size || monster.type.size;
+            ctx.fillStyle = monster.type.color;
+
+            switch(monster.type.shape) {
+                case "circle":
+                    ctx.beginPath();
+                    ctx.arc(x, y, size, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                case "triangle":
+                    ctx.beginPath();
+                    ctx.moveTo(x, y - size);
+                    ctx.lineTo(x - size, y + size);
+                    ctx.lineTo(x + size, y + size);
+                    ctx.closePath();
+                    ctx.fill();
+                    break;
+                case "rectangle":
+                    ctx.fillRect(x - size/2, y - size/2, size, size);
+                    break;
+                case "oval":
+                    ctx.beginPath();
+                    ctx.ellipse(x, y, size, size/2, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                case "pentagon":
+                    ctx.beginPath();
+                    for (let i = 0; i < 5; i++) {
+                        let angle = 2 * Math.PI * i / 5 - Math.PI / 2;
+                        let px = x + size * Math.cos(angle);
+                        let py = y + size * Math.sin(angle);
+                        if (i === 0) ctx.moveTo(px, py);
+                        else ctx.lineTo(px, py);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    break;
+                case "star":
+                    ctx.beginPath();
+                    for (let i = 0; i < 10; i++) {
+                        let angle = 2 * Math.PI * i / 10 - Math.PI / 2;
+                        let currSize = i % 2 === 0 ? size : size / 2;
+                        let px = x + currSize * Math.cos(angle);
+                        let py = y + currSize * Math.sin(angle);
+                        if (i === 0) ctx.moveTo(px, py);
+                        else ctx.lineTo(px, py);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    break;
+                case "sea_urchin":
+                    ctx.beginPath();
+                    ctx.arc(x, y, size, 0, Math.PI * 2);
+                    ctx.fill();
+                    for (let i = 0; i < 16; i++) {
+                        let angle = 2 * Math.PI * i / 16;
+                        let spikeLength = size * 0.4;
+                        let endX = x + (size + spikeLength) * Math.cos(angle);
+                        let endY = y + (size + spikeLength) * Math.sin(angle);
+                        ctx.beginPath();
+                        ctx.moveTo(x, y);
+                        ctx.lineTo(endX, endY);
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    }
+                    break;
+            }
+            
+            // Draw eyes and mouth
+            let eyeSize = Math.max(1, Math.floor(size / 5));
+            ctx.fillStyle = COLORS.BLACK;
+            ctx.beginPath();
+            ctx.arc(x - size/3, y - size/3, eyeSize, 0, Math.PI * 2);
+            ctx.arc(x + size/3, y - size/3, eyeSize, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = COLORS.RED;
+            ctx.beginPath();
+            ctx.arc(x, y + size/4, size/2, 0, Math.PI);
+            ctx.stroke();
+        }
+
+        function drawButton(ctx, button) {
+            ctx.fillStyle = button.color;
+            ctx.fillRect(button.x, button.y, button.width, button.height);
+            ctx.fillStyle = button.textColor;
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(button.text, button.x + button.width / 2, button.y + button.height / 2);
+        }
+
+        function drawProgressBar(ctx, x, y, width, height, progress, color) {
+            ctx.fillStyle = COLORS.WHITE;
+            ctx.strokeStyle = COLORS.WHITE;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, width, height);
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width * progress, height);
+        }
+
+        function drawMessage(ctx, message, font, color, maxWidth) {
+            ctx.font = font;
+            const words = message.split(' ');
+            const lines = [];
+            let currentLine = words[0];
+
+            for (let i = 1; i < words.length; i++) {
+                const word = words[i];
+                const width = ctx.measureText(currentLine + " " + word).width;
+                if (width < maxWidth) {
+                    currentLine += " " + word;
+                } else {
+                    lines.push(currentLine);
+                    currentLine = word;
+                }
+            }
+            lines.push(currentLine);
+
+            const lineHeight = parseInt(font) * 1.2;
+            const messageSurface = document.createElement('canvas');
+            messageSurface.width = maxWidth;
+            messageSurface.height = lines.length * lineHeight;
+            const messageCtx = messageSurface.getContext('2d');
+
+            messageCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            messageCtx.fillRect(0, 0, messageSurface.width, messageSurface.height);
+
+            messageCtx.font = font;
+            messageCtx.fillStyle = color;
+            messageCtx.textAlign = 'left';
+            messageCtx.textBaseline = 'top';
+
+            lines.forEach((line, i) => {
+                messageCtx.fillText(line, 0, i * lineHeight);
+            });
+            return messageSurface;
+        }
+
+        function drawLightning(ctx, start, end, branchProb = 0.5) {
+            function drawBranch(start, end, depth) {
+                if (depth > 3) return;
+                const mid = {
+                    x: (start.x + end.x) / 2,
+                    y: (start.y + end.y) / 2
+                };
+                const offset = {
+                    x: Math.random() * 30 - 15,
+                    y: Math.random() * 30 - 15
+                };
+                mid.x += offset.x;
+                mid.y += offset.y;
+                ctx.beginPath();
+                ctx.moveTo(start.x, start.y);
+                ctx.lineTo(mid.x, mid.y);
+                ctx.lineTo(end.x, end.y);
+                ctx.strokeStyle = COLORS.YELLOW;
+                ctx.lineWidth = 4 - depth;
+                ctx.stroke();
+                
+                if (Math.random() < branchProb) {
+                    const branchEnd = {
+                        x: mid.x + Math.random() * 60 - 30,
+                        y: mid.y + Math.random() * 60 - 30
+                    };
+                    drawBranch(mid, branchEnd, depth + 1);
+                }
+            }
+            drawBranch(start, end, 0);
+        }
+
+        function render(ctx) {
+            if (gameState.welcomeScreen) {
+                ctx.fillStyle = COLORS.BLACK;
+                ctx.fillRect(0, 0, WIDTH, HEIGHT);
+                
+                ctx.fillStyle = COLORS.RED;
+                ctx.font = '46px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText("Welcome to the Endless Dungeon", WIDTH / 2, HEIGHT / 2 - 100);
+
+                ctx.fillStyle = COLORS.WHITE;
+                ctx.font = '24px Arial';
+                ctx.fillText("How many floors can you conquer?", WIDTH / 2, HEIGHT / 2 + 50);
+
+                if (gameState.showStartText) {
+                    ctx.fillStyle = COLORS.GREEN;
+                    ctx.font = '18px Arial';
+                    ctx.fillText("Press ENTER or tap screen to start", WIDTH / 2, HEIGHT / 2 + 150);
+                }
+                return;
+            }
+
+            if (!gameState.gameOver) {
+                ctx.fillStyle = COLORS.BLACK;
+                ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+                drawProgressBar(ctx, 50, 50, 700, 30, gameState.progress / 100, COLORS.SKY_BLUE);
+
+                const knightPos = 50 + Math.floor(7 * gameState.knight.position);
+                drawKnight(ctx, knightPos, 65, 30, gameState.knight.color, gameState.knight.weaponColor, 
+                           gameState.knight.equipment.shield ? gameState.knight.shieldColor : COLORS.WHITE);
+
+                gameState.monsters.forEach((monster, i) => {
+                    const monsterPos = 50 + Math.floor(7 * monster.position);
+                    if (i === 0 && gameState.fighting) {
+                        const scaledSize = Math.floor(monster.type.size * gameState.monsterScale);
+                        drawMonster(ctx, monsterPos, 65, monster, scaledSize);
+                    } else {
+                        drawMonster(ctx, monsterPos, 65, monster);
+                    }
+                    
+                    const healthPercentage = monster.health / monster.maxHealth;
+                    drawProgressBar(ctx, monsterPos - 20, 80, 40, 5, healthPercentage, COLORS.GREEN);
+                });
+
+                // Draw lightning on top
+                if (gameState.fighting && gameState.monsters.length > 0 && gameState.lightningTimer < 0.5) {
+                    const monsterPos = 50 + Math.floor(7 * gameState.monsters[0].position);
+                    drawLightning(ctx, {x: knightPos, y: 65}, {x: monsterPos, y: 65});
+                }
+
+                ctx.font = '24px Arial';
+                ctx.fillStyle = COLORS.WHITE;
+                ctx.textAlign = 'left';
+                ctx.fillText(`Floor: ${gameState.currentFloor}`, 50, 100);
+                ctx.fillText(`Knight Level: ${gameState.knight.level}`, 50, 150);
+                ctx.fillText(`EXP: ${gameState.knight.exp}/${gameState.knight.expToNextLevel}`, 50, 200);
+                ctx.fillText(`Health: ${Math.floor(gameState.knight.health)}/${gameState.knight.maxHealth}`, 50, 250);
+                ctx.fillText(`Attack: ${gameState.knight.attack}`, 50, 300);
+                ctx.fillText(`Defense: ${gameState.knight.defense}`, 50, 350);
+                ctx.fillStyle = COLORS.YELLOW;
+                ctx.fillText(`Gold: ${gameState.knight.gold}`, 50, 400);
+
+                if (gameState.monsters.length > 0) {
+                    const monster = gameState.monsters[0];
+                    ctx.fillStyle = COLORS.RED;
+                    ctx.fillText(`${monster.type.name} Level: ${monster.level}`, 400, 100);
+                    ctx.fillText(`Monster Health: ${Math.floor(monster.health)}/${Math.floor(monster.maxHealth)}`, 400, 150);
+                }
+
+                Object.entries(gameState.knight.equipment).forEach(([slot, item], i) => {
+                    ctx.fillStyle = item ? item.getColor() : COLORS.WHITE;
+                    ctx.fillText(`${slot.charAt(0).toUpperCase() + slot.slice(1)}: ${item ? `${item.name} (Lv.${item.level}, +${item.bonus})` : 'None'}`, 50, 450 + i * 50);
+                });
+
+                if (gameState.showReturnPrompt) {
+                    ctx.font = '24px Arial';
+                    ctx.fillStyle = COLORS.WHITE;
+                    ctx.textAlign = 'right';
+                    const promptText = [
+                        "Return to town?",
+                        "Press Y or tap 'To Town' to confirm",
+                        "Press N or tap 'No' to cancel"
+                    ];
+                    promptText.forEach((line, i) => {
+                        ctx.fillText(line, WIDTH - 20, HEIGHT / 2 + i * 30);
+                    });
+                } else if (gameState.inTown) {
+                    ctx.font = '18px Arial';
+                    ctx.fillStyle = COLORS.WHITE;
+                    ctx.textAlign = 'right';
+                    const townText = [
+                        "In town:",
+                        "D or tap 'Draw': Draw equipment",
+                        "H or tap 'Heal': Heal",
+                        "W or tap 'Upgrade (W)': Upgrade weapon",
+                        "A or tap 'Upgrade (A)': Upgrade armor",
+                        "S or tap 'Upgrade (S)': Upgrade shield",
+                        "R or tap 'To dungeon': Return to dungeon"
+                    ];
+                    townText.forEach((line, i) => {
+                        ctx.fillText(line, WIDTH - 20, HEIGHT / 2 + i * 30);
+                    });
+                }
+
+                if (gameState.message) {
+                    const messageSurface = drawMessage(ctx, gameState.message, '18px Arial', COLORS.YELLOW, 200);
+                    ctx.drawImage(messageSurface, WIDTH - 210, HEIGHT - 110);
+                }
+
+                if (!gameState.welcomeScreen && !gameState.gameOver) {
+                    Object.values(gameState.buttons).forEach(button => drawButton(ctx, button));
+                }
+            } else {
+                // Game Over screen
+                ctx.fillStyle = COLORS.BLACK;
+                ctx.fillRect(0, 0, WIDTH, HEIGHT);
+                
+                ctx.font = '48px Arial';
+                ctx.fillStyle = COLORS.RED;
+                ctx.textAlign = 'center';
+                ctx.fillText("GAME OVER", WIDTH / 2, HEIGHT / 2 - 100);
+                
+                ctx.font = '24px Arial';
+                ctx.fillStyle = COLORS.WHITE;
+                ctx.fillText(`Monsters killed: ${gameState.knight.monstersKilled}`, WIDTH / 2, HEIGHT / 2);
+                ctx.fillText(`Highest floor: ${gameState.knight.highestFloor}`, WIDTH / 2, HEIGHT / 2 + 50);
+                ctx.fillStyle = COLORS.YELLOW;
+                ctx.fillText(`Max gold: ${gameState.knight.gold}`, WIDTH / 2, HEIGHT / 2 + 100);
+                ctx.fillStyle = COLORS.GREEN;
+                ctx.fillText(`Best equipment: ${gameState.knight.bestEquipment ? gameState.knight.bestEquipment.name : 'None'}`, WIDTH / 2, HEIGHT / 2 + 150);
+                ctx.fillStyle = COLORS.WHITE;
+                ctx.fillText("Press R or tap 'Restart' to restart", WIDTH / 2, HEIGHT / 2 + 200);
+
+                drawButton(ctx, gameState.buttons['restart']);
+            }
+        }
+
+        // Game initialization and main loop
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size
+        canvas.width = WIDTH;
+        canvas.height = HEIGHT;
+
+        // For tracking FPS
+        let frameCount = 0;
+        let lastTime = performance.now();
+        let fps = 0;
+
+        // Create global game state
+        const gameState = new GameState();
+
+        // Game loop
+        function gameLoop(currentTime) {
+            // Calculate FPS
+            frameCount++;
+            if (currentTime - lastTime >= 1000) {
+                fps = frameCount;
+                frameCount = 0;
+                lastTime = currentTime;
+            }
+
+            // Update game state
+            gameState.update();
+
+            // Render the game
+            render(ctx);
+
+            // Display FPS
+            ctx.fillStyle = COLORS.WHITE;
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`FPS: ${fps}`, 10, 20);
+
+            // Request next frame
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Initialize the game
+        function init() {
+            // Add event listeners
+            window.addEventListener('keydown', (e) => {
+                gameState.handleInput('key', e.key);
+            });
+
+            canvas.addEventListener('mousedown', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                gameState.handleInput('mouse', {x, y});
+            });
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const touch = e.touches[0];
+                const x = touch.clientX - rect.left;
+                const y = touch.clientY - rect.top;
+                gameState.handleInput('touch', {x, y});
+            }, { passive: false });
+
+            // Load game state from localStorage if available
+            const savedState = localStorage.getItem('gameState');
+            if (savedState) {
+                Object.assign(gameState, JSON.parse(savedState));
+            }
+
+            // Save game state periodically
+            setInterval(() => {
+                localStorage.setItem('gameState', JSON.stringify(gameState));
+            }, 60000); // Save every minute
+
+            // Start the game loop
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start the game when the window loads
+        window.onload = init;
+    </script>
+</body>
+</html>
